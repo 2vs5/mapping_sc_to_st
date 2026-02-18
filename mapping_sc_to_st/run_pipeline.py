@@ -354,9 +354,9 @@ def build_A_df_from_metanode_graph(
         graph_key=graph_key,
         ct_key=ct_key,
         obsm_key=obsm_key,
-        obsm_dims=obsm_dims,
+        #obsm_dims=obsm_dims,
         verbose=verbose,
-        **plot_kwargs,
+        #**plot_kwargs,
     )
 
     try:
@@ -450,6 +450,7 @@ class PipelineConfig:
 def run_pipeline(
     adata_sc,
     adata_st,
+    adata_mc,
     *,
     cfg: PipelineConfig = PipelineConfig(),
     # gene inputs
@@ -574,10 +575,11 @@ def run_pipeline(
         if metacell_graph_path is None or cell_type_color is None:
             raise ValueError("auto_build_A_df=True requires metacell_graph_path and cell_type_color.")
         A_df = build_A_df_from_metanode_graph(
-            adata_sc,
+            adata_mc,
             metacell_graph_path=metacell_graph_path,
             cell_type_color=cell_type_color,
             adata_st=adata_st,
+            use_ref_intersection=True,
             ref_ct_key=OBS_GLOBAL_TYPE,
             verbose=verbose,
             **A_df_kwargs,
