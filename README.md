@@ -1,4 +1,4 @@
-## Installation (Conda)
+# Installation (Conda)
 
 ```bash
 git clone https://github.com/mittnenzweiglab/mapping-sc-to-st.git
