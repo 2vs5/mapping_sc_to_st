@@ -13,9 +13,9 @@ pip install -r requirements.txt
 
 Tools to map a reference scRNA-seq atlas onto image-based spatial transcriptomics (ST) data (WeMERFISH zebrafish time course).
 
-## Background / idea
+## Background
 scRNA-seq has rich cell-type structure but no coordinates; ST has coordinates but noisier expression.  
-The pipeline links the two by solving an optimal-transport problem that balances **expression similarity** and **neighborhood/geometry consistency** (Fused Gromov-Wasserstein Optimal Transport), then refines the match using anchors and cell-type–aware steps.
+The pipeline links the two by solving an optimal-transport problem that balances **expression similarity** and **neighborhood/geometry consistency** (Fused Gromov-Wasserstein (FGW) Optimal Transport (OT)), then refines the match using anchors and cell-type–aware steps.
 
 ## How the code is organized
 Core modules live in `mapping_sc_to_st/`:
