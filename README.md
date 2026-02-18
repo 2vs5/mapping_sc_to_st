@@ -1,7 +1,7 @@
 # Installation (Conda)
 
 ```bash
-git clone https://github.com/mittnenzweiglab/mapping-sc-to-st.git
+git clone https://github.com/2vs5/mapping_sc_to_st.git
 cd mapping_sc_to_st
 
 conda create -n mapping_sc_to_st python=3.10.18 -y
