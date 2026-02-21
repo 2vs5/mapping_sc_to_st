@@ -15,7 +15,7 @@ from scipy.stats import spearmanr
 
 from .global_map import run_global_1to1_mapping
 from .genes import select_genes_per_celltype
-from .pairwise_refine import select_type_pairs_from_A, refine_pair_ct1_ct2, refine_single_ct
+from .pairwise_refine import select_type_pairs_from_A, refine_pair_ct1_ct2, refine_single_ct, build_st_pairs_from_knn, finalize_pairs
 from .bleeding import compute_directional_bleeding, compute_incoming_union
 from .merge import merge_refinements
 from .anchors import select_st_anchors_final
@@ -400,6 +400,8 @@ class PipelineConfig:
     corr_method: str = "pearson"
 
     # pairwise refine
+    pair_k = 10
+    pair_threshold = 200
     top_n_pairs: int = 1000
     st_sim_min: float = 0.3
     min_cells_sc: int = 2
@@ -563,37 +565,16 @@ def run_pipeline(
         out["global_map"] = {"skipped": True}
 
     # 3) A_df (candidate type-pair graph)
-    if A_df is None and not recompute_A_df:
-        A_df = adata_sc.uns.get("A_df", None)
-
-    if A_df is None or recompute_A_df:
-        if not auto_build_A_df:
-            raise KeyError(
-                "A_df not found. Provide `A_df=...`, set adata_sc.uns['A_df'], "
-                "or use auto_build_A_df=True with metacell_graph_path + cell_type_color."
-            )
-        if metacell_graph_path is None or cell_type_color is None:
-            raise ValueError("auto_build_A_df=True requires metacell_graph_path and cell_type_color.")
-        A_df = build_A_df_from_metanode_graph(
-            adata_mc,
-            metacell_graph_path=metacell_graph_path,
-            cell_type_color=cell_type_color,
-            adata_st=adata_st,
-            use_ref_intersection=True,
-            ref_ct_key=OBS_GLOBAL_TYPE,
-            verbose=verbose,
-            **A_df_kwargs,
-        )
-
-    # store for downstream convenience
-    try:
-        adata_sc.uns["A_df"] = A_df
-    except Exception:
-        pass
+    pairs_df_st, centroid_df = build_st_pairs_from_knn(
+        adata_st, ct_key="global_sc_type", k=cfg.pair_k
+    )
+    
+    pairs_df_final = finalize_pairs(
+        pairs_df_st, threshold=cfg.pair_threshold, exclude_sc=False, sc_pair_csv_path=metacell_graph_path
+    )
 
     # 4) choose candidate type pairs
-    pairs_df = select_type_pairs_from_A(A_df, top_n=cfg.top_n_pairs, undirected=True, drop_self=True)
-    pairs_selected = list(pairs_df[["type_a", "type_b"]].itertuples(index=False, name=None))
+    pairs_selected = list(pairs_df_final[["ct1", "ct2"]].itertuples(index=False, name=None))
     out["pairs_selected"] = pairs_selected
 
     # 5) bleeding + incoming union
@@ -1268,22 +1249,19 @@ def run_loo(
                 hvg_layer=None,
                 mode=cfg.mode,
             )
+            
+            
+            pairs_df_st, centroid_df = build_st_pairs_from_knn(
+                cal_adata_st, ct_key="global_sc_type", k=cfg.pair_k
+            )
 
-            A_df = build_A_df_from_metanode_graph(
-                adata_sc_full,
-                metacell_graph_path=metacell_graph_path,
-                cell_type_color=cell_type_color,
-                adata_st=cal_adata_st,
-                ref_ct_key=OBS_GLOBAL_TYPE,
-                verbose=verbose,
-                **pipeline_kwargs,
+            pairs_df_final = finalize_pairs(
+                pairs_df_st, threshold=cfg.pair_threshold, exclude_sc=False, sc_pair_csv_path=metacell_graph_path
             )
-            pairs_df = select_type_pairs_from_A(
-                A_df, top_n=cfg.top_n_pairs, undirected=True, drop_self=True
-            )
-            pairs_selected = list(
-                pairs_df[["type_a", "type_b"]].itertuples(index=False, name=None)
-            )
+
+            # 4) choose candidate type pairs
+            pairs_selected = list(pairs_df_final[["ct1", "ct2"]].itertuples(index=False, name=None))
+            
 
             bleed = compute_directional_bleeding(
                 adata_sc_full,

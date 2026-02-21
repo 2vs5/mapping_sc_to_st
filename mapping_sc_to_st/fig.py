@@ -1675,3 +1675,176 @@ def plot_phi_umap(
     out["st_types_all"] = st_types_all
     out["fig"] = fig
     return out
+
+
+# =====================================================================
+# ST spatial kNN pair workflow figures
+# =====================================================================
+
+def plot_pair_weight_hist(
+    pairs_df: pd.DataFrame,
+    *,
+    threshold: float,
+    bins="auto",
+    figsize=(7, 4),
+    title="ST type-pair weight distribution",
+    xlabel="weight",
+    ylabel="#pairs",
+    show: bool = True,
+):
+    """Plot a histogram of pair weights with a red vertical threshold line.
+
+    The x-axis is weight and the y-axis is the number of pairs in each bin.
+    """
+    if not isinstance(pairs_df, pd.DataFrame):
+        raise TypeError("pairs_df must be a pandas DataFrame")
+    if "weight" not in pairs_df.columns:
+        raise KeyError("pairs_df must contain column 'weight'")
+
+    w = pd.to_numeric(pairs_df["weight"], errors="coerce").dropna().to_numpy(dtype=float)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.hist(w, bins=bins)
+    ax.axvline(float(threshold), color="red", linewidth=2)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if show:
+        plt.show()
+    return fig, ax
+
+
+def plot_typepair_graph_spatial(
+    pairs_df: pd.DataFrame,
+    centroid_df: pd.DataFrame,
+    cell_type_color: dict,
+    *,
+    ct1_col="ct1",
+    ct2_col="ct2",
+    weight_col="weight",
+    figsize=(14, 5),
+    node_size=140,
+    node_edgewidth=0.8,
+    edge_color="#4C8DFF",  
+    edge_alpha=0.25,
+    edge_width_min=0.3,
+    edge_width_max=2.5,
+    show_labels=False,
+    legend=True,
+    legend_ncol=2,
+    legend_fontsize=10,
+    legend_title=None,
+):
+    # --- validate ---
+    
+    if isinstance(cell_type_color, pd.DataFrame):
+        if "cell_type" not in cell_type_color.columns or "color" not in cell_type_color.columns:
+            raise KeyError("cell_type_color DF must have columns ['cell_type','color']")
+        color_map = dict(
+            zip(
+                cell_type_color["cell_type"].astype(str).str.strip(),
+                cell_type_color["color"].astype(str).str.strip()
+            )
+        )
+        
+    elif isinstance(cell_type_color, dict):
+        color_map = {str(k).strip(): str(v).strip() for k, v in cell_type_color.items()}
+    else:
+        raise TypeError("cell_type_color must be dict or DataFrame with columns ['cell_type','color']")
+        
+    for c in (ct1_col, ct2_col, weight_col):
+        if c not in pairs_df.columns:
+            raise KeyError(f"pairs_df must contain '{c}'")
+    for c in ("x", "y"):
+        if c not in centroid_df.columns:
+            raise KeyError("centroid_df must contain columns 'x','y'")
+
+    nodes = [str(x).strip() for x in centroid_df.index.astype(str)]
+    pos_xy = centroid_df.loc[nodes, ["x", "y"]].to_numpy(float)
+    pos = {ct: (pos_xy[i, 0], pos_xy[i, 1]) for i, ct in enumerate(nodes)}
+    node_set = set(nodes)
+
+    # --- edges ---
+    e = pairs_df[[ct1_col, ct2_col, weight_col]].copy()
+    e[ct1_col] = e[ct1_col].astype(str)
+    e[ct2_col] = e[ct2_col].astype(str)
+    e[weight_col] = pd.to_numeric(e[weight_col], errors="coerce")
+    e = e.dropna(subset=[weight_col])
+    e = e[e[ct1_col].isin(node_set) & e[ct2_col].isin(node_set)]
+
+    w = e[weight_col].to_numpy(float)
+    if len(w) > 0:
+        wmin, wmax = float(w.min()), float(w.max())
+        if wmax == wmin:
+            lw = np.full_like(w, (edge_width_min + edge_width_max) / 2)
+        else:
+            lw = edge_width_min + (w - wmin) / (wmax - wmin) * (edge_width_max - edge_width_min)
+    else:
+        lw = np.array([])
+
+    segments = []
+    for a, b in e[[ct1_col, ct2_col]].itertuples(index=False, name=None):
+        xa, ya = pos[a]
+        xb, yb = pos[b]
+        segments.append([(xa, ya), (xb, yb)])
+
+    # --- figure/axes ---
+    fig, ax = plt.subplots(figsize=figsize)
+
+
+    fig.subplots_adjust(right=0.72)
+
+    # draw edges
+    if segments:
+        lc = LineCollection(
+            segments,
+            linewidths=lw,
+            colors=edge_color,
+            alpha=edge_alpha,
+            zorder=1,
+        )
+        ax.add_collection(lc)
+
+    # draw nodes
+    node_colors = [color_map.get(ct, "#BDBDBD") for ct in nodes]
+    ax.scatter(
+        pos_xy[:, 0],
+        pos_xy[:, 1],
+        s=node_size,
+        c=node_colors,
+        edgecolors='none',
+        linewidths=0,
+        zorder=2,
+    )
+
+    # optional labels
+    if show_labels:
+        for ct in nodes:
+            x, y = pos[ct]
+            ax.text(x, y, ct, fontsize=9, ha="center", va="center", zorder=3)
+
+
+    ax.set_axis_off()
+    ax.set_aspect("equal", adjustable="datalim")
+
+    # legend on the right
+    if legend:
+        handles = [
+            Line2D([0], [0], marker="o", linestyle="",
+                   markerfacecolor=color_map.get(ct, "#BDBDBD"),
+                   markeredgecolor='none',
+                   markeredgewidth=3,
+                   markersize=7,
+                   label=ct)
+            for ct in nodes
+        ]
+        ax.legend(
+            handles=handles,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            ncol=legend_ncol,
+            fontsize=legend_fontsize,
+            title=legend_title,
+        )
+
+    return fig, ax

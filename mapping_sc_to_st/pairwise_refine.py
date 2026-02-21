@@ -23,6 +23,8 @@ Important
 from __future__ import annotations
 import numpy as np
 import pandas as pd
+from scipy.spatial import cKDTree
+from .prep import _get_spatial_coords as _get_spatial_coords
 
 from .keys import (
     OBS_GLOBAL_TYPE,
@@ -1022,3 +1024,197 @@ def select_type_pairs_from_A(
         df = df.head(k).reset_index(drop=True)
 
     return df
+
+
+def _ckdtree_query(tree: cKDTree, X: np.ndarray, k: int, workers: int = 1):
+    """SciPy version compatibility for cKDTree.query parallel arg."""
+    try:
+        return tree.query(X, k=k, workers=workers)
+    except TypeError:
+        try:
+            return tree.query(X, k=k, n_jobs=workers)
+        except TypeError:
+            return tree.query(X, k=k)
+
+
+def build_st_pairs_from_knn(
+    adata_st,
+    *,
+    ct_key: str = OBS_GLOBAL_TYPE,  # usually "global_sc_type"
+    spatial_key_prefer=("spatial_normed", "spatial"),
+    xy_cols=None,
+    k: int = 10,
+    workers: int = 1,
+    strip_types: bool = True,
+    drop_self: bool = True,
+):
+    """Build ST-only cell-type pairs from spatial kNN.
+
+    Notes
+    -----
+    - Uses *spot-level* spatial kNN based on `spatial_key_prefer`.
+    - Produces *undirected* type pairs by normalizing each directed edge
+      (A->B) to an unordered pair (min(A,B), max(A,B)).
+    - Weight is the *symmetric sum* of directed neighbor counts.
+
+    Returns
+    -------
+    pairs_df_st : pd.DataFrame
+        Columns: ["ct1", "ct2", "weight"], with ct1 < ct2.
+    centroid_df : pd.DataFrame
+        Index: cell_type; columns: ["x", "y", "n_spots"], where (x,y) is mean coord.
+    """
+    if ct_key not in adata_st.obs:
+        raise KeyError(f"'{ct_key}' not found in adata_st.obs")
+
+    k = int(k)
+    if k <= 0:
+        raise ValueError("k must be >= 1")
+    if adata_st.n_obs <= 1:
+        raise ValueError("adata_st must contain at least 2 observations")
+
+    # choose spatial key
+    spatial_key = None
+    for cand in spatial_key_prefer:
+        if cand in adata_st.obsm:
+            spatial_key = cand
+            break
+    if spatial_key is None:
+        spatial_key = spatial_key_prefer[0] if len(spatial_key_prefer) else "spatial_normed"
+
+    X = _get_spatial_coords(adata_st, spatial_key=spatial_key, xy_cols=xy_cols)
+    X = np.asarray(X, dtype=np.float32)
+    X = np.ascontiguousarray(X)
+    if not np.isfinite(X).all():
+        raise ValueError(f"Spatial coordinates contain NaN/Inf (key='{spatial_key}').")
+
+    # labels
+    ct = adata_st.obs[ct_key].astype(str)
+    if strip_types:
+        ct = ct.str.strip()
+    ct = ct.to_numpy(dtype=object)
+
+    # centroid per type (mean)
+    df_tmp = pd.DataFrame({"ct": ct, "x": X[:, 0].astype(float), "y": X[:, 1].astype(float)})
+    g = df_tmp.groupby("ct", sort=True)
+    centroid_df = pd.DataFrame({
+        "x": g["x"].mean(),
+        "y": g["y"].mean(),
+        "n_spots": g.size().astype(int),
+    })
+    centroid_df.index.name = "cell_type"
+
+    # kNN (query k+1 then drop self)
+    n = X.shape[0]
+    if k >= n:
+        raise ValueError(f"k={k} must be < n_obs={n} (self removed).")
+    tree = cKDTree(X)
+    _, nn = _ckdtree_query(tree, X, k=k + 1, workers=workers)
+    nn = np.asarray(nn, dtype=np.int64)
+
+    # Expect self in first column; if not, we'll filter self explicitly.
+    nn = nn[:, 1:]
+    src = np.repeat(np.arange(n, dtype=np.int64), k)
+    dst = nn.reshape(-1)
+
+    # safeguard (in case self wasn't first)
+    mask_not_self = dst != src
+    if not np.all(mask_not_self):
+        src = src[mask_not_self]
+        dst = dst[mask_not_self]
+
+    ct_src = ct[src]
+    ct_dst = ct[dst]
+
+    # undirected normalization (ct1 < ct2 lexicographically)
+    le = ct_src <= ct_dst
+    ct1 = np.where(le, ct_src, ct_dst)
+    ct2 = np.where(le, ct_dst, ct_src)
+
+    if drop_self:
+        m = ct1 != ct2
+        ct1 = ct1[m]
+        ct2 = ct2[m]
+
+    pairs_df_st = pd.DataFrame({"ct1": ct1, "ct2": ct2})
+    if pairs_df_st.empty:
+        pairs_df_st = pd.DataFrame(columns=["ct1", "ct2", "weight"])
+        return pairs_df_st, centroid_df
+
+    pairs_df_st["weight"] = 1
+    pairs_df_st = (
+        pairs_df_st.groupby(["ct1", "ct2"], sort=True, as_index=False)["weight"]
+        .sum()
+        .sort_values(["weight", "ct1", "ct2"], ascending=[False, True, True])
+        .reset_index(drop=True)
+    )
+    pairs_df_st["weight"] = pairs_df_st["weight"].astype(int)
+
+    return pairs_df_st, centroid_df
+
+
+def finalize_pairs(
+    pairs_df_st: pd.DataFrame,
+    *,
+    threshold: int,
+    exclude_sc: bool = False,
+    sc_pair_csv_path: str | None = None,
+    sc_pair_cols=("cell_type1", "cell_type2"),
+    strip_types: bool = True,
+):
+    """Apply weight threshold and optionally remove SC/metacell pairs from a CSV.
+
+    Returns only the final pair table (ct1, ct2, weight).
+    """
+    if not isinstance(pairs_df_st, pd.DataFrame):
+        raise TypeError("pairs_df_st must be a pandas DataFrame")
+    for col in ("ct1", "ct2", "weight"):
+        if col not in pairs_df_st.columns:
+            raise KeyError(f"pairs_df_st must contain column '{col}'")
+
+    thr = int(threshold)
+    out = pairs_df_st.copy()
+    out["weight"] = pd.to_numeric(out["weight"], errors="coerce")
+    out = out.dropna(subset=["ct1", "ct2", "weight"])
+    out = out[out["weight"] >= thr]
+    out["ct1"] = out["ct1"].astype(str)
+    out["ct2"] = out["ct2"].astype(str)
+    if strip_types:
+        out["ct1"] = out["ct1"].str.strip()
+        out["ct2"] = out["ct2"].str.strip()
+
+    # ensure undirected normalization
+    le = out["ct1"].to_numpy(object) <= out["ct2"].to_numpy(object)
+    ct1 = np.where(le, out["ct1"].to_numpy(object), out["ct2"].to_numpy(object))
+    ct2 = np.where(le, out["ct2"].to_numpy(object), out["ct1"].to_numpy(object))
+    out["ct1"] = ct1
+    out["ct2"] = ct2
+    out = out[out["ct1"] != out["ct2"]]
+
+    if exclude_sc:
+        if sc_pair_csv_path is None:
+            raise ValueError("exclude_sc=True requires sc_pair_csv_path")
+        c1, c2 = sc_pair_cols
+        sc_df = pd.read_csv(sc_pair_csv_path)
+        if c1 not in sc_df.columns or c2 not in sc_df.columns:
+            raise KeyError(f"SC CSV must contain columns {sc_pair_cols}")
+
+        s1 = sc_df[c1].astype(str)
+        s2 = sc_df[c2].astype(str)
+        if strip_types:
+            s1 = s1.str.strip()
+            s2 = s2.str.strip()
+
+        le2 = s1 <= s2
+        sc_ct1 = np.where(le2, s1.to_numpy(object), s2.to_numpy(object))
+        sc_ct2 = np.where(le2, s2.to_numpy(object), s1.to_numpy(object))
+        m = sc_ct1 != sc_ct2
+        sc_pairs = set(zip(sc_ct1[m].tolist(), sc_ct2[m].tolist()))
+
+        if sc_pairs:
+            keep_mask = ~out.apply(lambda r: (r["ct1"], r["ct2"]) in sc_pairs, axis=1)
+            out = out.loc[keep_mask]
+
+    out["weight"] = out["weight"].astype(int)
+    out = out.sort_values(["weight", "ct1", "ct2"], ascending=[False, True, True]).reset_index(drop=True)
+    return out[["ct1", "ct2", "weight"]]
