@@ -32,7 +32,7 @@ Core modules live in `mapping_sc_to_st/`:
 Dependencies are listed in `requirements.txt`.
 
 ## Tutorial
-A minimal example based on publicly available data is provided in the `example/` directory.
+A minimal example based on publicly available data is provided in the `tutorial/` directory.
 It is configured without absolute paths, so the full pipeline can be executed without modifying any local directory settings.
 
 ### Execution order
