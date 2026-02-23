@@ -38,13 +38,15 @@ It is configured without absolute paths, so the full pipeline can be executed wi
 ### Execution order
 Run the notebooks in `example/` in the following order:
 - `01.data_import.ipynb`
+
   Loads public scRNA-seq and spatial transcriptomics datasets, constructs AnnData objects, performs basic preprocessing and gene alignment, and saves the processed data under a configurable BASE_DIR.
 - `02.run_example.ipynb`
+
   Loads the processed data, computes expression and geometry costs, runs global FGW mapping, applies anchor-based refinement, and generates example outputs and visualizations.
 
 ## Notebooks (00–04)
 - `00.make_clusters_75_E1.ipynb`  
-  Loads data, applies basic filters, and prepares clustering / embeddings used downstream.
+  Loads data, applies basic filters, and prepares clustering/embeddings used downstream.
 - `01.explanation_75_E1.ipynb`  
   Detailed pipeline and code walk-through. This notebook is the reference for how `mapping_sc_to_st` runs.
 - `02.example_75_E1_CV.ipynb`  
