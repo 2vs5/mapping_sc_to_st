@@ -31,6 +31,17 @@ Core modules live in `mapping_sc_to_st/`:
 
 Dependencies are listed in `requirements.txt`.
 
+## Tutorial
+A minimal example based on publicly available data is provided in the `example/` directory.
+It is configured without absolute paths, so the full pipeline can be executed without modifying any local directory settings.
+
+### Execution order
+Run the notebooks in `example/` in the following order:
+- `01.data_import.ipynb`
+  Loads public scRNA-seq and spatial transcriptomics datasets, constructs AnnData objects, performs basic preprocessing and gene alignment, and saves the processed data under a configurable BASE_DIR.
+- `02.run_example.ipynb`
+  Loads the processed data, computes expression and geometry costs, runs global FGW mapping, applies anchor-based refinement, and generates example outputs and visualizations.
+
 ## Notebooks (00–04)
 - `00.make_clusters_75_E1.ipynb`  
   Loads data, applies basic filters, and prepares clustering / embeddings used downstream.
