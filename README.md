@@ -23,10 +23,6 @@ The framework was evaluated on weMERFISH data from three zebrafish developmental
 Overall, these results suggest that reliable single-cell-spatial transcriptomics mapping in developing tissues requires not only transcriptomic agreement but also preservation of boundary-related and broader spatial structure. By explicitly accounting for local distortion near tissue boundaries during alignment, the proposed framework provides a biologically informed strategy for more robust spatial reconstruction and interpretation in embryonic systems.
 
 
-## Background
-scRNA-seq has rich cell-type structure but no coordinates; ST has coordinates but noisier expression.  
-The pipeline links the two by solving an optimal-transport problem that balances **expression similarity** and **neighborhood/geometry consistency** (Fused Gromov-Wasserstein (FGW) Optimal Transport (OT)), then refines the match using anchors and cell-type–aware steps.
-
 ## How the code is organized
 Core modules live in `mapping_sc_to_st/`:
 
